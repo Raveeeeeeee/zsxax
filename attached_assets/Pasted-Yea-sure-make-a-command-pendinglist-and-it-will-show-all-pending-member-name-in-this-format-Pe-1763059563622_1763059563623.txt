@@ -1,0 +1,21 @@
+Yea sure, make a command .pendinglist and it will show all pending member name in this format:
+
+Pending members:
+
+Que [1]: name
+Que [2]: name
+Que [3]: name
+
+you are free to modify this format to make it more organize or add some emojis to make it more pleasant to see
+
+Then add a .pendingaccept [Que number] command so if an admin or the super admin or the developer executed this, the name in that que number will be accepted to the group chat, also make a .pendingreject [Que Number] as an opposite (ONLY THE ADMIN,SUPER ADMIN, AND DEVELOPER CAN DO THIS)
+
+Also modify the command .shutdown, instead shutting down the bot, make the bot shutdown or unresponsive in that specific group, rendering the functions offline like the vulgarity word detection, the spam detection, etc. when the command is executed, the bot will shutdown in the group chat but the bot is still running. And make .initialize to make the bot online again in that specific group, after being online then the offline scanning should be exercised and done since the bot is considered offline after executing the .shutdown command. (.shutdown and .initialize can only be executed by the developer)
+
+Also the Picture unsent function is not working, When a user or member unsent a photo or a media or a picture, It only shows the timestamps of the unsent message but never sends the picture that has been unsent when it should be. It might be the bot was not saving or downloading the photo that has been sent before it gets unsent so that if it gets unsent the bot will have a copy of the photo and sends it to the group chat, or might be a flaw in the source code. So fix it.
+
+Also fix the attendance and attendance list of absences, when someone changes their nickname or name then their name or nickname in the attendance and list of absences doesn't change until reset or don't even change. Fix this, the attendance must be updated at all times whether someone changes nicknames or changes the name, the attendance and attendance list of missed attendance or record of absences should be. If possible to counter this, you can use the UID of every member in the group because the nickname and name can change but never the UID of facebook account so if they change, the record of absents and record of attendance in that current time and date will be retained even after changing nickname or name.
+
+Remove the super admin globally but retain the global DEVELOPER since he was the only one that made the prompts and codes, in the super admin, every group chat should only have 3 super admin and the super admin can only be super admin if the developer executed a command .supaddmin @mention and they will be super admin of that specific group. (THIS COMMAND CAN ONLY BE EXECUTED BY THE DEVELOPER)
+
+Same as before the super admin privileges and permissions should be retained, especially the only the Developer and The Super admin can be the admin of the group chat (It is different in being admin in the bot), nothing else.
