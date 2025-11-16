@@ -247,7 +247,14 @@ async function handleMessage(event) {
     senderID
   });
 
+  const isInactive = !data.isGroupActive(threadID);
+  
   if (attachments && attachments.length > 0 && attachments.some(att => att.type === 'photo')) {
+    data.cacheMessage(messageID, threadID, senderID, body, attachments || []);
+    if (isInactive) {
+      console.log(`📦 Message with attachment metadata stored immediately for offline processing in thread ${threadID}`);
+    }
+    
     const photoAttachments = attachments.filter(att => att.type === 'photo');
     const downloadPromises = photoAttachments.map(async (att) => {
       if (att.url) {
@@ -264,15 +271,18 @@ async function handleMessage(event) {
     
     Promise.all(downloadPromises).then(downloadedAttachments => {
       data.cacheMessageWithFiles(messageID, threadID, senderID, body, attachments, downloadedAttachments);
+      console.log(`✅ Downloaded and cached attachment files for message ${messageID}`);
     }).catch(err => {
-      console.error(`Error downloading attachments:`, err);
-      data.cacheMessage(messageID, threadID, senderID, body, attachments || []);
+      console.error(`⚠️ Error downloading attachment files for message ${messageID}:`, err);
     });
   } else {
     data.cacheMessage(messageID, threadID, senderID, body, attachments || []);
+    if (isInactive) {
+      console.log(`📦 Message stored for offline processing in thread ${threadID}`);
+    }
   }
 
-  if (!data.isGroupActive(threadID)) {
+  if (isInactive) {
     console.log(`⏸️ Group ${threadID} is inactive, skipping message processing`);
     const message = body ? body.trim() : "";
     if (message === ".initialize" && isProtectedUser(threadID, senderID)) {
@@ -1974,7 +1984,8 @@ async function handleShutdownCommand(threadID, messageID, senderID) {
   
   data.setGroupActive(threadID, false);
   
-  sendMessage(threadID, `🛑 Bot is now shutting down for this group...\n\nInitiated by: ${adminName}\n\n⚠️ The bot will ignore all messages in this group until reactivated with .initialize\n\nGoodbye! 👋`, messageID);
+  sendMessage(threadID, `🛑 Bot is now shutting down for this group...\n\nInitiated by: ${adminName}\n\n⚠️ The bot will ignore all messages in this group until reactivated with .initialize\n\n📦 Messages sent while inactive will be stored and scanned when you use .initialize\n\nGoodbye! 👋`, messageID);
+  console.log(`📦 Offline message tracking enabled for thread ${threadID} - messages will be stored until .initialize is called`);
 }
 
 async function processOfflineMessages(threadID, messages) {
@@ -2063,10 +2074,19 @@ async function handleInitializeCommand(threadID, messageID, senderID) {
 
   console.log(`🚀 INITIALIZE initiated by ${adminName} (${senderID}) for thread ${threadID}`);
   
-  data.setGroupActive(threadID, true);
-  
   const offlineMessages = data.getOfflineMessages(threadID);
   const messageCount = offlineMessages.length;
+  
+  console.log(`📊 Offline messages retrieved: ${messageCount} for thread ${threadID}`);
+  if (messageCount > 0) {
+    console.log(`📋 First few offline messages:`, offlineMessages.slice(0, 3).map(m => ({
+      id: m.messageID,
+      sender: m.senderID,
+      body: (m.body || '').substring(0, 50)
+    })));
+  }
+  
+  data.setGroupActive(threadID, true);
   
   sendMessage(threadID, `🚀 Bot is now active in this group!\n\nInitiated by: ${adminName}\n\n✅ The bot will now respond to all commands and monitor the group.\n\n📦 Processing ${messageCount} offline messages...\n\nWelcome back! 👋`, messageID);
   
@@ -2075,6 +2095,8 @@ async function handleInitializeCommand(threadID, messageID, senderID) {
     await processOfflineMessages(threadID, offlineMessages);
     data.clearOfflineMessages(threadID);
     console.log(`✅ Finished processing offline messages for thread ${threadID}`);
+  } else {
+    console.log(`ℹ️ No offline messages to process for thread ${threadID}`);
   }
 }
 
@@ -2860,6 +2882,24 @@ async function handleUnsendMessage(event) {
   const nickname = threadInfo?.nicknames?.[senderID] || userInfo?.name || "Someone";
   
   console.log(`🔄 Message unsent by ${nickname} (${senderID}) in thread ${threadID}`);
+  
+  const isInactive = !data.isGroupActive(threadID);
+  if (isInactive && cachedMessage.body) {
+    const messageBody = cachedMessage.body.trim();
+    if (messageBody) {
+      console.log(`📦 Storing unsent message for offline vulgar word scanning in thread ${threadID}`);
+      const offlineEntry = {
+        messageID: messageID,
+        threadID: threadID,
+        senderID: senderID,
+        body: messageBody,
+        attachments: cachedMessage.attachments || [],
+        timestamp: Date.now(),
+        isUnsent: true
+      };
+      data.addToOfflineMessages(threadID, offlineEntry);
+    }
+  }
   
   const hasImages = cachedMessage.attachments && cachedMessage.attachments.some(att => att.type === 'photo');
   
