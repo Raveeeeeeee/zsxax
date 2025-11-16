@@ -1079,6 +1079,15 @@ class DataManager {
     return this.offlineMessages[threadID] || [];
   }
   
+  addToOfflineMessages(threadID, messageData) {
+    if (!this.offlineMessages[threadID]) {
+      this.offlineMessages[threadID] = [];
+    }
+    this.offlineMessages[threadID].push(messageData);
+    this.saveJSON(path.join(this.dataDir, "offlineMessages.json"), this.offlineMessages);
+    console.log(`📦 Added message to offline queue for thread ${threadID} (total: ${this.offlineMessages[threadID].length})`);
+  }
+  
   clearOfflineMessages(threadID) {
     if (this.offlineMessages[threadID]) {
       delete this.offlineMessages[threadID];
