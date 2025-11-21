@@ -168,10 +168,6 @@ async function initializeBot() {
         checkAttendanceOnStartup();
       }, 10000);
       
-      setTimeout(() => {
-        scanAllGroupsForPendingMembers();
-      }, 15000);
-      
       resolve(api);
     });
   });
@@ -438,18 +434,6 @@ async function handleMessage(event) {
   } else if (message.startsWith(".serverinfo ")) {
     console.log("✅ Executing .serverinfo command");
     await handleServerInfoCommand(threadID, messageID, senderID, message);
-  } else if (message === ".pendinglist") {
-    console.log("✅ Executing .pendinglist command");
-    await handlePendingListCommand(threadID, messageID);
-  } else if (message.startsWith(".pendingaccept ")) {
-    console.log("✅ Executing .pendingaccept command");
-    await handlePendingAcceptCommand(threadID, messageID, senderID, message);
-  } else if (message.startsWith(".pendingreject ")) {
-    console.log("✅ Executing .pendingreject command");
-    await handlePendingRejectCommand(threadID, messageID, senderID, message);
-  } else if (message === ".scanpending") {
-    console.log("✅ Executing .scanpending command");
-    await handleScanPendingCommand(threadID, messageID, senderID);
   } else {
     await handleInvalidCommand(threadID, messageID, senderID, message);
   }
@@ -488,9 +472,6 @@ async function handleHelpCommand(threadID, messageID, senderID, message) {
   
   const adminCommands = [
     ".adminlist - View all admins in this group",
-    ".pendinglist - View pending member approval queue",
-    ".pendingaccept [Que #] - Accept pending member (ADMIN, SUPER ADMIN, DEVELOPER)",
-    ".pendingreject [Que #] - Reject pending member (ADMIN, SUPER ADMIN, DEVELOPER)",
     ".attendancereset - Manually reset attendance",
     ".resetatt @user - Reset specific user's absence records",
     ".attendanceexl @user - Temporarily exclude user from attendance",
@@ -1007,18 +988,45 @@ async function checkForVulgarWords(threadID, messageID, senderID, message, event
   }
   
   if (recentMessages.length > 1) {
-    const combinedMessage = recentMessages.map(h => h.message).join('');
+    const combinedMessage = recentMessages.map(h => h.message).join(' ');
     const combinedMessageNoSpaces = combinedMessage.replace(/\s+/g, '');
     const combinedOriginalText = recentMessages.map(h => h.originalText).join(' ');
     
+    const combinedOriginalWords = extractOriginalWords(combinedOriginalText);
+    const allCombinedWords = extractAllWords(combinedOriginalText);
+    
     for (const keyword of keywords) {
       const normalizedKeyword = normalizeForDetection(keyword);
+      const minWordLength = normalizedKeyword.length;
       const flexPattern = createFlexiblePattern(normalizedKeyword);
+      
+      const obfuscatedWords = allCombinedWords.filter(w => isObfuscatedWord(w));
+      for (const obfWord of obfuscatedWords) {
+        const normalizedObf = normalizeForDetection(obfWord);
+        if (normalizedObf === normalizedKeyword) {
+          console.log(`🚨 Detected obfuscated vulgar word across messages: "${obfWord}" → "${normalizedObf}" matches "${keyword}"`);
+          await issueWarning(threadID, messageID, senderID, event, `Used vulgar word (obfuscated) across multiple messages: "${keyword}" (Combined: "${combinedOriginalText.substring(0, 50)}...")`);
+          userMessageHistory.delete(historyKey);
+          return;
+        }
+      }
       
       let matchedInNormal = matchFlexibleKeyword(combinedMessage, normalizedKeyword, flexPattern);
       let matchedInCompact = matchFlexibleKeyword(combinedMessageNoSpaces, normalizedKeyword, flexPattern);
       
       if (matchedInNormal || matchedInCompact) {
+        let hasActualVulgarWord = combinedOriginalWords.some(word => {
+          if (word.length < minWordLength) return false;
+          
+          const normalizedWord = normalizeForDetection(word);
+          return normalizedWord === normalizedKeyword && !isSafeWord(word);
+        });
+        
+        if (!hasActualVulgarWord) {
+          console.log(`✓ Skipping false positive in combined messages: matched "${keyword}" but no actual vulgar word found in original text`);
+          continue;
+        }
+        
         if (matchedInCompact && !matchedInNormal) {
           console.log(`🚨 Detected space-bypass across messages: "${combinedOriginalText.substring(0, 50)}..."`);
         }
@@ -2665,132 +2673,6 @@ async function handleServerInfoCommand(threadID, messageID, senderID, message) {
   sendMessage(threadID, `✅ Server information updated!\n\n🖥️ ${serverInfo}`, messageID);
 }
 
-async function handlePendingListCommand(threadID, messageID) {
-  const pendingMembers = data.getPendingMembers(threadID);
-  
-  if (pendingMembers.length === 0) {
-    sendMessage(threadID, "✅ No pending members awaiting approval!", messageID);
-    return;
-  }
-
-  let message = `📋 Pending Members:\n\n`;
-  
-  for (let i = 0; i < pendingMembers.length; i++) {
-    const pending = pendingMembers[i];
-    message += `Que [${i + 1}]: ${pending.nickname}\n`;
-    message += `   UID: ${pending.userID}\n`;
-    message += `   Added: ${new Date(pending.addedDate).toLocaleString('en-US', { timeZone: 'Asia/Manila' })}\n\n`;
-  }
-  
-  message += `\nUse .pendingaccept [Que #] to approve\nUse .pendingreject [Que #] to reject`;
-  
-  sendMessage(threadID, message, messageID);
-}
-
-async function handlePendingAcceptCommand(threadID, messageID, senderID, message) {
-  if (!isAdmin(threadID, senderID)) {
-    sendMessage(threadID, "❌ Only admins, super admins, and the developer can accept pending members!", messageID);
-    return;
-  }
-
-  const queNumber = parseInt(message.substring(".pendingaccept ".length).trim());
-  
-  if (isNaN(queNumber) || queNumber < 1) {
-    sendMessage(threadID, "❌ Invalid queue number!\n\nUsage: .pendingaccept [Que #]\nExample: .pendingaccept 1", messageID);
-    return;
-  }
-
-  const pendingMembers = data.getPendingMembers(threadID);
-  
-  if (queNumber > pendingMembers.length) {
-    sendMessage(threadID, `❌ Queue number ${queNumber} not found! There are only ${pendingMembers.length} pending member(s).`, messageID);
-    return;
-  }
-
-  const index = queNumber - 1;
-  const pending = data.removePendingMember(threadID, index);
-  
-  if (!pending) {
-    sendMessage(threadID, "❌ Error removing pending member!", messageID);
-    return;
-  }
-
-  const adminInfo = await getUserInfo(senderID);
-  const adminName = adminInfo?.name || "Admin";
-  
-  sendMessage(threadID, `✅ ${pending.nickname} has been approved by ${adminName}!\n\nWelcome to the group! 👋`, messageID);
-  
-  if (!isAdmin(threadID, pending.userID)) {
-    data.addMember(threadID, pending.userID, pending.nickname);
-  }
-  
-  console.log(`✅ ${adminName} accepted pending member ${pending.nickname} (${pending.userID}) in thread ${threadID}`);
-}
-
-async function handlePendingRejectCommand(threadID, messageID, senderID, message) {
-  if (!isAdmin(threadID, senderID)) {
-    sendMessage(threadID, "❌ Only admins, super admins, and the developer can reject pending members!", messageID);
-    return;
-  }
-
-  const queNumber = parseInt(message.substring(".pendingreject ".length).trim());
-  
-  if (isNaN(queNumber) || queNumber < 1) {
-    sendMessage(threadID, "❌ Invalid queue number!\n\nUsage: .pendingreject [Que #]\nExample: .pendingreject 1", messageID);
-    return;
-  }
-
-  const pendingMembers = data.getPendingMembers(threadID);
-  
-  if (queNumber > pendingMembers.length) {
-    sendMessage(threadID, `❌ Queue number ${queNumber} not found! There are only ${pendingMembers.length} pending member(s).`, messageID);
-    return;
-  }
-
-  const index = queNumber - 1;
-  const pending = data.removePendingMember(threadID, index);
-  
-  if (!pending) {
-    sendMessage(threadID, "❌ Error removing pending member!", messageID);
-    return;
-  }
-
-  const adminInfo = await getUserInfo(senderID);
-  const adminName = adminInfo?.name || "Admin";
-  
-  sendMessage(threadID, `🚫 ${pending.nickname} has been rejected by ${adminName} and will be removed from the group.`, messageID);
-  
-  setTimeout(() => {
-    api.removeUserFromGroup(pending.userID, threadID, (err) => {
-      if (err) {
-        console.error(`Failed to remove rejected pending member ${pending.nickname}:`, err);
-        sendMessage(threadID, `❌ Failed to remove ${pending.nickname}. Please remove manually.`);
-      } else {
-        console.log(`✅ Removed rejected pending member ${pending.nickname} from group ${threadID}`);
-      }
-    });
-  }, 1500);
-  
-  console.log(`🚫 ${adminName} rejected pending member ${pending.nickname} (${pending.userID}) in thread ${threadID}`);
-}
-
-async function handleScanPendingCommand(threadID, messageID, senderID) {
-  if (!isAdmin(threadID, senderID)) {
-    sendMessage(threadID, "❌ Only admins can scan for pending members!", messageID);
-    return;
-  }
-
-  sendMessage(threadID, "🔍 Scanning for pending members in this group...\n\nPlease wait...", messageID);
-  
-  const imported = await scanAndImportPendingMembers(threadID);
-  
-  if (imported === 0) {
-    sendMessage(threadID, "✅ Scan complete!\n\nNo new pending members found or approval mode is not enabled for this group.");
-  } else {
-    sendMessage(threadID, `✅ Scan complete!\n\nImported ${imported} pending member(s).\n\nUse .pendinglist to view them.`);
-  }
-}
-
 async function handleInvalidCommand(threadID, messageID, senderID, message) {
   if (isProtectedUser(threadID, senderID)) {
     const invalidResponses = [
@@ -3112,10 +2994,6 @@ async function handleGroupEvent(event) {
             console.log("✅ Admin scanning complete!");
           });
           
-          setTimeout(async () => {
-            console.log("🔍 Scanning for pending members in new group...");
-            await scanAndImportPendingMembers(threadID);
-          }, 2000);
         }, 10000);
         
         continue;
@@ -3155,13 +3033,6 @@ async function handleGroupEvent(event) {
             console.log(`✅ Bot nickname changed to TENSURA in thread ${threadID}`);
           }
         });
-        continue;
-      }
-      
-      if (!isAdderTrusted) {
-        data.addPendingMember(threadID, userID, nickname);
-        console.log(`📋 Added ${nickname} to pending approval queue`);
-        sendMessage(threadID, `⏳ ${nickname} has been added to the pending approval queue.\n\nAdmins can use .pendinglist to view and .pendingaccept to approve.`);
         continue;
       }
       
@@ -3348,131 +3219,6 @@ async function getThreadInfo(threadID, forceRefresh = false) {
       }
     });
   });
-}
-
-async function scanAndImportPendingMembers(threadID) {
-  try {
-    console.log(`🔍 Scanning for existing pending members in thread ${threadID}...`);
-    
-    const threadInfo = await getThreadInfo(threadID, true);
-    if (!threadInfo) {
-      console.log(`⚠️ Could not get thread info for ${threadID}`);
-      return 0;
-    }
-
-    console.log(`📊 Thread approval mode: ${threadInfo.approvalMode}`);
-    console.log(`📊 Thread info keys: ${Object.keys(threadInfo).join(', ')}`);
-    
-    if (threadInfo.approvalMode !== undefined && !threadInfo.approvalMode) {
-      console.log(`ℹ️ Thread ${threadID} does not have approval mode enabled`);
-      return 0;
-    }
-
-    let pendingIDs = [];
-    
-    console.log(`🔎 Checking for pendingRequestIDs: ${threadInfo.pendingRequestIDs ? threadInfo.pendingRequestIDs.length : 'undefined'}`);
-    console.log(`🔎 Checking for pendingParticipants: ${threadInfo.pendingParticipants ? threadInfo.pendingParticipants.length : 'undefined'}`);
-    console.log(`🔎 Checking for approvalQueue: ${threadInfo.approvalQueue ? threadInfo.approvalQueue.length : 'undefined'}`);
-    
-    if (threadInfo.pendingRequestIDs && threadInfo.pendingRequestIDs.length > 0) {
-      pendingIDs = threadInfo.pendingRequestIDs;
-      console.log(`📋 Using pendingRequestIDs: ${pendingIDs.length} member(s)`, pendingIDs);
-    } else if (threadInfo.pendingParticipants && threadInfo.pendingParticipants.length > 0) {
-      const participants = threadInfo.pendingParticipants;
-      console.log(`📋 Raw pendingParticipants:`, JSON.stringify(participants, null, 2));
-      if (typeof participants[0] === 'object') {
-        pendingIDs = participants.map(p => p.userID || p.userFbId || p.id).filter(Boolean);
-        console.log(`📋 Using pendingParticipants (objects): ${pendingIDs.length} member(s)`, pendingIDs);
-      } else {
-        pendingIDs = participants;
-        console.log(`📋 Using pendingParticipants (IDs): ${pendingIDs.length} member(s)`, pendingIDs);
-      }
-    } else if (threadInfo.approvalQueue && threadInfo.approvalQueue.length > 0) {
-      const queue = threadInfo.approvalQueue;
-      console.log(`📋 Raw approvalQueue:`, JSON.stringify(queue, null, 2));
-      if (typeof queue[0] === 'object') {
-        pendingIDs = queue.map(p => p.userID || p.userFbId || p.id).filter(Boolean);
-        console.log(`📋 Using approvalQueue (objects): ${pendingIDs.length} member(s)`, pendingIDs);
-      } else {
-        pendingIDs = queue;
-        console.log(`📋 Using approvalQueue (IDs): ${pendingIDs.length} member(s)`, pendingIDs);
-      }
-    }
-    
-    if (pendingIDs.length === 0) {
-      console.log(`✅ No existing pending members found in thread ${threadID}`);
-      console.log(`📊 Full threadInfo structure:`, JSON.stringify(threadInfo, null, 2));
-      return 0;
-    }
-
-    console.log(`📋 Found ${pendingIDs.length} existing pending member(s) in thread ${threadID}`);
-    
-    let importedCount = 0;
-    for (const userID of pendingIDs) {
-      console.log(`🔍 Getting info for user ${userID}...`);
-      const userInfo = await getUserInfo(userID);
-      if (!userInfo) {
-        console.log(`⚠️ Could not get user info for ${userID}, skipping...`);
-        continue;
-      }
-
-      const nickname = userInfo.name || "Unknown User";
-      console.log(`👤 User info retrieved: ${nickname} (${userID})`);
-      
-      const existingPending = data.getPendingMembers(threadID).find(p => p.userID === userID);
-      if (existingPending) {
-        console.log(`⏭️ ${nickname} (${userID}) already in pending list, skipping...`);
-        continue;
-      }
-
-      const added = data.addPendingMember(threadID, userID, nickname, null, new Date().toISOString());
-      if (added) {
-        console.log(`✅ Imported pending member: ${nickname} (${userID})`);
-        importedCount++;
-      } else {
-        console.log(`❌ Failed to add pending member: ${nickname} (${userID})`);
-      }
-    }
-
-    console.log(`✅ Imported ${importedCount} pending member(s) from thread ${threadID}`);
-    return importedCount;
-  } catch (error) {
-    console.error(`❌ Error scanning pending members for thread ${threadID}:`, error);
-    console.error(`Error stack:`, error.stack);
-    return 0;
-  }
-}
-
-async function scanAllGroupsForPendingMembers() {
-  try {
-    console.log("\n🔍 Starting scan for existing pending members across all groups...");
-    
-    const threadList = await new Promise((resolve) => {
-      api.getThreadList(100, null, [], (err, list) => {
-        if (err) {
-          console.error("Failed to get thread list:", err);
-          resolve([]);
-        } else {
-          resolve(list);
-        }
-      });
-    });
-
-    console.log(`📊 Found ${threadList.length} thread(s) to scan`);
-    
-    let totalImported = 0;
-    for (const thread of threadList) {
-      const threadID = thread.threadID;
-      const imported = await scanAndImportPendingMembers(threadID);
-      totalImported += imported;
-      
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-
-    console.log(`\n✅ Pending member scan complete! Total imported: ${totalImported}\n`);
-  } catch (error) {
-    console.error("❌ Error during pending member scan:", error);
-  }
 }
 
 async function getUserInfo(userID) {
@@ -3827,6 +3573,11 @@ async function scanMissedVulgarWords() {
       
       if (!data.isGroupActive(threadID)) {
         console.log(`⏸️ Group ${threadID} is shutdown, skipping offline scan (will scan on .initialize)`);
+        continue;
+      }
+      
+      if (data.isWarExtremeMode(threadID)) {
+        console.log(`⚔️ Group ${threadID} is in war extreme mode, skipping offline scan`);
         continue;
       }
       
