@@ -18,7 +18,6 @@ class DataManager {
     this.fakeWarningsFile = path.join(this.dataDir, "fakeWarnings.json");
     this.kickCountFile = path.join(this.dataDir, "kickCount.json");
     this.memberJoinDatesFile = path.join(this.dataDir, "memberJoinDates.json");
-    this.pendingMembersFile = path.join(this.dataDir, "pendingMembers.json");
     this.groupStatusFile = path.join(this.dataDir, "groupStatus.json");
     this.superAdminsFile = path.join(this.dataDir, "superAdmins.json");
     
@@ -39,7 +38,6 @@ class DataManager {
     this.fakeWarnings = this.loadJSON(this.fakeWarningsFile, {});
     this.kickCount = this.loadJSON(this.kickCountFile, {});
     this.memberJoinDates = this.loadJSON(this.memberJoinDatesFile, {});
-    this.pendingMembers = this.loadJSON(this.pendingMembersFile, {});
     this.groupStatus = this.loadJSON(this.groupStatusFile, {});
     this.superAdmins = this.loadJSON(this.superAdminsFile, {});
     this.offlineMessages = this.loadJSON(path.join(this.dataDir, "offlineMessages.json"), {});
@@ -1004,57 +1002,6 @@ class DataManager {
   getMemberJoinDate(threadID, userID) {
     const key = `${threadID}_${userID}`;
     return this.memberJoinDates[key];
-  }
-
-  addPendingMember(threadID, userID, name, requestedBy, timestamp = null) {
-    if (!this.pendingMembers[threadID]) {
-      this.pendingMembers[threadID] = [];
-    }
-    
-    const existing = this.pendingMembers[threadID].find(p => p.userID === userID);
-    if (existing) {
-      return false;
-    }
-    
-    this.pendingMembers[threadID].push({
-      userID,
-      nickname: name,
-      name: name,
-      requestedBy,
-      timestamp: timestamp || new Date().toISOString(),
-      addedDate: timestamp || new Date().toISOString()
-    });
-    
-    this.saveJSON(this.pendingMembersFile, this.pendingMembers);
-    return true;
-  }
-
-  getPendingMembers(threadID) {
-    return this.pendingMembers[threadID] || [];
-  }
-
-  removePendingMember(threadID, index) {
-    if (!this.pendingMembers[threadID] || index < 0 || index >= this.pendingMembers[threadID].length) {
-      return null;
-    }
-    
-    const removed = this.pendingMembers[threadID].splice(index, 1)[0];
-    
-    if (this.pendingMembers[threadID].length === 0) {
-      delete this.pendingMembers[threadID];
-    }
-    
-    this.saveJSON(this.pendingMembersFile, this.pendingMembers);
-    return removed;
-  }
-
-  clearPendingMembers(threadID) {
-    if (this.pendingMembers[threadID]) {
-      delete this.pendingMembers[threadID];
-      this.saveJSON(this.pendingMembersFile, this.pendingMembers);
-      return true;
-    }
-    return false;
   }
 
   isGroupActive(threadID) {
